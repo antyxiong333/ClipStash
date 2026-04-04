@@ -4,3 +4,4 @@
 ClipStash.app/
 *.xcodeproj/xcuserdata/
 DerivedData/
+*.dmg

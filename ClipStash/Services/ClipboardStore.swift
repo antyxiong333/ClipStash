@@ -9,6 +9,8 @@ final class ClipboardStore {
     let maxHistorySize = 200
 
     weak var monitor: ClipboardMonitor?
+    var onScreenshot: (() -> Void)?
+    var onPinImage: ((ClipboardItem) -> Void)?
 
     var filteredItems: [ClipboardItem] {
         var result = items

@@ -20,5 +20,7 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>ClipStash needs Screen Recording permission to capture screenshots.</string>
 </dict>
 </plist>

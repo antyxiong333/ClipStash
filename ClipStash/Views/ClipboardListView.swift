@@ -74,6 +74,17 @@ struct ClipboardListView: View {
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
+                // Screenshot
+                Button {
+                    store.onScreenshot?()
+                } label: {
+                    Image(systemName: "camera")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Screenshot (Cmd+Shift+S)")
+
                 // Pin filter
                 Button {
                     store.showPinnedOnly.toggle()
@@ -136,7 +147,10 @@ struct ClipboardListView: View {
                             withAnimation {
                                 store.removeItem(id: item.id)
                             }
-                        }
+                        },
+                        onPinFloat: item.contentType == .image ? {
+                            store.onPinImage?(item)
+                        } : nil
                     )
                     .overlay {
                         if copiedItemId == item.id {

@@ -4,23 +4,25 @@ import Carbon
 final class GlobalKeyboardShortcut {
     private var globalMonitor: Any?
     private var localMonitor: Any?
-    private let action: () -> Void
+    private let toggleAction: () -> Void
+    private let screenshotAction: () -> Void
 
-    init(action: @escaping () -> Void) {
-        self.action = action
+    init(toggleAction: @escaping () -> Void, screenshotAction: @escaping () -> Void) {
+        self.toggleAction = toggleAction
+        self.screenshotAction = screenshotAction
     }
 
-    /// Register Cmd+Shift+V as global hotkey
+    /// Register global hotkeys:
+    /// - Cmd+Shift+V: toggle panel
+    /// - Cmd+Ctrl+S: screenshot
     func register() {
-        // Monitor when another app is focused
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event)
         }
 
-        // Monitor when our app is focused
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if self?.handleKeyEvent(event) == true {
-                return nil // consume the event
+                return nil
             }
             return event
         }
@@ -39,14 +41,24 @@ final class GlobalKeyboardShortcut {
 
     @discardableResult
     private func handleKeyEvent(_ event: NSEvent) -> Bool {
-        // Cmd+Shift+V
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags == [.command, .shift] && event.keyCode == 9 { // keyCode 9 = V
+
+        // Cmd+Shift+V → toggle panel
+        if flags == [.command, .shift] && event.keyCode == 9 {
             DispatchQueue.main.async { [weak self] in
-                self?.action()
+                self?.toggleAction()
             }
             return true
         }
+
+        // Cmd+Ctrl+S → screenshot
+        if flags == [.command, .control] && event.keyCode == 1 {
+            DispatchQueue.main.async { [weak self] in
+                self?.screenshotAction()
+            }
+            return true
+        }
+
         return false
     }
 

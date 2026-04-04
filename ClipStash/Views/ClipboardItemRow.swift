@@ -5,6 +5,7 @@ struct ClipboardItemRow: View {
     let onCopy: () -> Void
     let onTogglePin: () -> Void
     let onDelete: () -> Void
+    var onPinFloat: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -51,6 +52,17 @@ struct ClipboardItemRow: View {
 
             // Actions
             VStack(spacing: 4) {
+                // Pin-to-float for images
+                if item.contentType == .image, let onPinFloat {
+                    Button(action: onPinFloat) {
+                        Image(systemName: "pin")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Float on screen")
+                }
+
                 Button(action: onTogglePin) {
                     Image(systemName: item.isPinned ? "star.fill" : "star")
                         .font(.system(size: 11))
