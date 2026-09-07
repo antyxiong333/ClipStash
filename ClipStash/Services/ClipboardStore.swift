@@ -6,6 +6,7 @@ final class ClipboardStore {
     var items: [ClipboardItem] = []
     var searchQuery: String = ""
     var showPinnedOnly: Bool = false
+    var shortcutErrors: [String] = []
     let maxHistorySize = 200
 
     weak var monitor: ClipboardMonitor?

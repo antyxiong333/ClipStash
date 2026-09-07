@@ -2,6 +2,8 @@
 .build/
 .swiftpm/
 ClipStash.app/
+ClipStash/Resources/AppIcon.icns
+ClipStash/Resources/AppIcon.iconset/
 *.xcodeproj/xcuserdata/
 DerivedData/
 *.dmg

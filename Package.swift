@@ -8,13 +8,19 @@ let package = Package(
         .executableTarget(
             name: "ClipStash",
             path: "ClipStash",
-            exclude: ["Resources/Info.plist"],
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/Assets.xcassets",
+                "Resources/AppIcon.icns",
+                "Resources/AppIcon.iconset"
+            ],
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate",
                               "-Xlinker", "__TEXT",
                               "-Xlinker", "__info_plist",
                               "-Xlinker", "ClipStash/Resources/Info.plist"])
             ]
-        )
+        ),
+        .testTarget(name: "ClipStashTests", dependencies: ["ClipStash"], path: "Tests/ClipStashTests")
     ]
 )

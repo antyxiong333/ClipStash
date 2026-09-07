@@ -6,6 +6,11 @@ struct ClipboardListView: View {
     @State private var showClearConfirmation = false
     @State private var copiedItemId: UUID?
     @State private var isHovered = false
+    @State private var showSettings = false
+    @State private var launchAtLoginEnabled = LaunchAtLoginManager.isEnabled
+    @State private var launchAtLoginStatus = LaunchAtLoginManager.statusDescription
+    @State private var launchAtLoginError: String?
+    @State private var screenRecordingAllowed = ScreenCaptureService.hasPermission
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,8 +19,10 @@ struct ClipboardListView: View {
 
             Divider().opacity(isHovered ? 1 : 0.3)
 
-            // List
-            if store.filteredItems.isEmpty {
+            // List / Settings
+            if showSettings {
+                settingsView
+            } else if store.filteredItems.isEmpty {
                 emptyStateView
             } else {
                 listView
@@ -83,7 +90,8 @@ struct ClipboardListView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Screenshot (Cmd+Shift+S)")
+                .help("Global Screenshot (Cmd+Ctrl+S)")
+                .accessibilityLabel("Screenshot")
 
                 // Pin filter
                 Button {
@@ -95,6 +103,20 @@ struct ClipboardListView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Show pinned only")
+
+                // Settings
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showSettings.toggle()
+                    }
+                    refreshLaunchAtLoginStatus()
+                } label: {
+                    Image(systemName: showSettings ? "list.bullet" : "gearshape")
+                        .font(.system(size: 12))
+                        .foregroundStyle(showSettings ? .primary : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(showSettings ? "Back to clipboard" : "Settings")
 
                 // Clear all
                 Button {
@@ -119,6 +141,133 @@ struct ClipboardListView: View {
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
         .padding(.top, 20)
+    }
+
+    // MARK: - Settings
+
+    private var settingsView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Settings")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: Binding(
+                        get: { launchAtLoginEnabled },
+                        set: { setLaunchAtLogin($0) }
+                    )) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Launch at login")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Open ClipStash automatically when you sign in.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(launchAtLoginEnabled ? Color.green : Color.secondary.opacity(0.45))
+                            .frame(width: 6, height: 6)
+                        Text("Status: \(launchAtLoginStatus)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let launchAtLoginError {
+                        Text(launchAtLoginError)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(12)
+                .background(Color.black.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Screen Recording")
+                        .font(.system(size: 13, weight: .medium))
+                    Label(screenRecordingAllowed ? "Allowed" : "Permission required for screenshots",
+                          systemImage: screenRecordingAllowed ? "checkmark.circle" : "exclamationmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(screenRecordingAllowed ? Color.green : Color.orange)
+                    Button("Open System Settings") {
+                        ScreenCaptureService.openPermissionSettings()
+                        screenRecordingAllowed = ScreenCaptureService.hasPermission
+                    }
+                    .font(.system(size: 12))
+                    Text("After allowing access, quit and reopen this copy of ClipStash.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.black.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Keyboard Shortcuts")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Global Screenshot: Cmd+Ctrl+S\nShow/Hide Panel: Cmd+Shift+V")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    ForEach(store.shortcutErrors, id: \.self) { error in
+                        Text(error)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Button {
+                    refreshLaunchAtLoginStatus()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Text("ClipStash v\(appVersion)\n\(Bundle.main.bundlePath)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+        }
+        .onAppear {
+            refreshLaunchAtLoginStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshLaunchAtLoginStatus()
+        }
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        launchAtLoginError = nil
+
+        do {
+            try LaunchAtLoginManager.setEnabled(enabled)
+        } catch {
+            launchAtLoginError = error.localizedDescription
+        }
+
+        refreshLaunchAtLoginStatus()
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        launchAtLoginEnabled = LaunchAtLoginManager.isEnabled
+        launchAtLoginStatus = LaunchAtLoginManager.statusDescription
+        screenRecordingAllowed = ScreenCaptureService.hasPermission
     }
 
     // MARK: - List

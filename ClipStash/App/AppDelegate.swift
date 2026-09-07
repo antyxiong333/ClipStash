@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-let appVersion = "1.1.0"
+let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.0"
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let captureService = ScreenCaptureService()
     var editorWindow: ScreenshotEditorWindow?
     var floatingScreenshots: [ScreenshotFloatingWindow] = []
+    private var restorePanelAfterCapture = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -34,11 +35,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             toggleAction: { [weak self] in self?.panelController.toggle() },
             screenshotAction: { [weak self] in self?.startScreenshot() }
         )
-        keyboardShortcut?.register()
+        store.shortcutErrors = keyboardShortcut?.register() ?? []
 
         // Wire up capture service
-        captureService.onCapture = { [weak self] image in
-            self?.showEditor(for: image)
+        captureService.onCompletion = { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .captured(let screenshot):
+                self.showEditor(for: screenshot)
+            case .cancelled:
+                if self.restorePanelAfterCapture { self.panelController.show() }
+            case .failed(let failure):
+                self.panelController.show()
+                self.showScreenshotFailure(failure)
+            }
         }
     }
 
@@ -51,15 +61,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Screenshot
 
     func startScreenshot() {
+        guard !captureService.isCapturing else { return }
+        if let editorWindow, editorWindow.isVisible {
+            NSApp.activate(ignoringOtherApps: true)
+            editorWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+        restorePanelAfterCapture = panelController.isVisible
         panelController.hide()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.captureService.startCapture()
+        captureService.startCapture()
+    }
+
+    private func showScreenshotFailure(_ failure: ScreenCaptureFailure) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch failure {
+        case .permissionRequired:
+            alert.messageText = "Screen Recording Permission Required"
+            alert.informativeText = "Allow this copy of ClipStash in System Settings > Privacy & Security > Screen & System Audio Recording, then quit and reopen it. An older copy's permission may not apply.\n\nRunning app: \(Bundle.main.bundlePath)"
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "Cancel")
+        case .couldNotStart:
+            alert.messageText = "Could Not Start Screenshot"
+            alert.informativeText = "macOS could not launch the screenshot tool. Reopen ClipStash and try again."
+            alert.addButton(withTitle: "OK")
+        case .commandFailed(let status):
+            alert.messageText = "Screenshot Failed"
+            alert.informativeText = "The system screenshot tool returned error \(status). Check Screen Recording permission for this copy of ClipStash, then reopen the app."
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "Cancel")
+        case .invalidImage:
+            alert.messageText = "Could Not Read Screenshot"
+            alert.informativeText = "The screenshot did not contain a valid image. Please try again."
+            alert.addButton(withTitle: "OK")
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            switch failure {
+            case .permissionRequired, .commandFailed:
+                ScreenCaptureService.openPermissionSettings()
+            default:
+                break
+            }
         }
     }
 
-    private func showEditor(for image: NSImage) {
+    private func showEditor(for screenshot: CapturedScreenshot) {
         editorWindow = ScreenshotEditorWindow(
-            image: image,
+            image: screenshot.image,
+            captureRect: screenshot.screenRect,
             onSave: { [weak self] finalImage in
                 self?.saveScreenshot(finalImage)
                 self?.editorWindow = nil

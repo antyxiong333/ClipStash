@@ -13,14 +13,7 @@ WINDOW_H=400
 ICON_SIZE=128
 
 echo "=== Building ClipStash ==="
-swift build -c release 2>&1 | grep -E "(Build complete|error:)"
-
-echo "=== Creating .app bundle ==="
-rm -rf "${APP_NAME}.app"
-mkdir -p "${APP_NAME}.app/Contents/MacOS"
-mkdir -p "${APP_NAME}.app/Contents/Resources"
-cp ".build/release/${APP_NAME}" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
-cp "ClipStash/Resources/Info.plist" "${APP_NAME}.app/Contents/Info.plist"
+./build-app.sh
 
 echo "=== Creating DMG ==="
 rm -rf "${STAGING_DIR}" "${DMG_FINAL}" "${DMG_TEMP}"

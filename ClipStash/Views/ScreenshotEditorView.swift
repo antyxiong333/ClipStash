@@ -101,71 +101,84 @@ struct ScreenshotEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Canvas
-            ZStack(alignment: .topLeading) {
-                // Background image
-                Image(nsImage: originalImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+            GeometryReader { geometry in
+                let canvasSize = fittedSize(for: originalImage.size, inside: geometry.size)
 
-                // Drawing canvas overlay
-                DrawingCanvasView(
-                    elements: history.elements,
-                    currentElement: currentElement,
-                    imageSize: originalImage.size
-                )
+                ZStack(alignment: .topLeading) {
+                    Image(nsImage: originalImage)
+                        .resizable()
+                        .frame(width: canvasSize.width, height: canvasSize.height)
 
-                // Mouse interaction layer
-                DrawingInteractionView(
-                    tool: currentTool,
-                    color: currentColor,
-                    lineWidth: lineWidth,
-                    isEditingText: isEditingText,
-                    onElementStarted: { element in
-                        currentElement = element
-                    },
-                    onElementUpdated: { element in
-                        currentElement = element
-                    },
-                    onElementFinished: { element in
-                        if currentTool == .text {
-                            commitCurrentText()
-                            textEditPoint = element.startPoint
-                            textEditValue = ""
-                            isEditingText = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                textFieldFocused = true
-                            }
-                        } else if currentTool == .eraser {
-                            eraseAt(element.endPoint)
-                        } else {
-                            history.addElement(element)
-                        }
-                        currentElement = nil
-                    }
-                )
-
-                // Inline text field
-                if isEditingText {
-                    InlineTextFieldView(
-                        text: $textEditValue,
-                        isFocused: $textFieldFocused,
-                        color: currentColor,
-                        fontSize: max(14, lineWidth * 5),
-                        position: textEditPoint,
-                        onCommit: { commitCurrentText() }
+                    DrawingCanvasView(
+                        elements: history.elements,
+                        currentElement: currentElement,
+                        imageSize: originalImage.size
                     )
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .frame(width: canvasSize.width, height: canvasSize.height)
 
-            Spacer().frame(height: 12)
+                    DrawingInteractionView(
+                        tool: currentTool,
+                        color: currentColor,
+                        lineWidth: lineWidth,
+                        imageSize: originalImage.size,
+                        isEditingText: isEditingText,
+                        onElementStarted: { element in
+                            currentElement = element
+                        },
+                        onElementUpdated: { element in
+                            currentElement = element
+                        },
+                        onElementFinished: { element in
+                            if currentTool == .text {
+                                commitCurrentText()
+                                textEditPoint = element.startPoint
+                                textEditValue = ""
+                                isEditingText = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    textFieldFocused = true
+                                }
+                            } else if currentTool == .eraser {
+                                eraseAt(element.endPoint)
+                            } else {
+                                history.addElement(element)
+                            }
+                            currentElement = nil
+                        }
+                    )
+
+                    if isEditingText {
+                        InlineTextFieldView(
+                            text: $textEditValue,
+                            isFocused: $textFieldFocused,
+                            color: currentColor,
+                            fontSize: max(14, lineWidth * 5),
+                            position: textEditPoint,
+                            imageSize: originalImage.size,
+                            onCommit: { commitCurrentText() }
+                        )
+                    }
+                }
+                .frame(width: canvasSize.width, height: canvasSize.height)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+            }
+            .padding(16)
 
             // Toolbar
             toolbarView
         }
-        .padding(16)
-        .background(Color.white.opacity(0.95))
+        .background(Color.white)
         .environment(\.colorScheme, .light)
+        .onExitCommand(perform: onCancel)
+    }
+
+    private func fittedSize(for imageSize: NSSize, inside availableSize: CGSize) -> CGSize {
+        let scale = min(
+            availableSize.width / max(imageSize.width, 1),
+            availableSize.height / max(imageSize.height, 1),
+            1
+        )
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
     }
 
     // MARK: - Commit inline text
@@ -193,128 +206,146 @@ struct ScreenshotEditorView: View {
     // MARK: - Toolbar
 
     private var toolbarView: some View {
-        HStack(spacing: 12) {
-            // Drawing tools
-            ForEach(DrawingTool.allCases, id: \.rawValue) { tool in
-                Button {
-                    if isEditingText { commitCurrentText() }
-                    currentTool = tool
-                } label: {
-                    Image(systemName: tool.rawValue)
-                        .font(.system(size: 14))
-                        .frame(width: 30, height: 30)
-                        .background(currentTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .help(tool.label)
+        HStack(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                editorControls
+                    .fixedSize(horizontal: true, vertical: false)
             }
+            .frame(maxWidth: .infinity)
 
-            Divider().frame(height: 24)
+            Divider().frame(height: 32)
 
-            // Colors
-            ForEach(availableColors, id: \.self) { color in
-                Button {
-                    currentColor = color
-                } label: {
-                    Circle()
-                        .fill(color)
-                        .frame(width: 18, height: 18)
-                        .overlay {
-                            if currentColor == color {
-                                Circle().stroke(Color.gray, lineWidth: 2)
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-            }
-
-            Divider().frame(height: 24)
-
-            // Line width
-            Slider(value: $lineWidth, in: 1...10, step: 1)
-                .frame(width: 60)
-
-            Divider().frame(height: 24)
-
-            // Undo
-            Button {
-                history.undo()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .disabled(!history.canUndo)
-            .help("Undo (Cmd+Z)")
-
-            // Redo
-            Button {
-                history.redo()
-            } label: {
-                Image(systemName: "arrow.uturn.forward")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .disabled(!history.canRedo)
-            .help("Redo (Cmd+Shift+Z)")
-
-            Spacer()
-
-            // Pin button
-            if let onPin {
-                Button {
-                    commitCurrentText()
-                    let finalImage = renderFinalImage()
-                    onPin(finalImage)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "pin")
-                        Text("Pin")
+            HStack(spacing: 6) {
+                if let onPin {
+                    actionButton("pin", help: "Keep on Top", foreground: .orange, background: .orange.opacity(0.12)) {
+                        commitCurrentText()
+                        onPin(renderFinalImage())
                     }
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.orange.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
-            }
 
-            // Cancel
-            Button {
-                onCancel()
-            } label: {
-                Text("Cancel")
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-            }
-            .buttonStyle(.plain)
-
-            // Save & Copy
-            Button {
-                commitCurrentText()
-                let finalImage = renderFinalImage()
-                onSave(finalImage)
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark")
-                    Text("Save & Copy")
+                actionButton("xmark", help: "Cancel (Esc)", foreground: .primary, background: .black.opacity(0.05)) {
+                    onCancel()
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(Color.accentColor)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                actionButton("checkmark", help: "Save & Copy", foreground: .white, background: .accentColor) {
+                    commitCurrentText()
+                    onSave(renderFinalImage())
+                }
             }
-            .buttonStyle(.plain)
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-        .background(Color.gray.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 12)
+        .frame(height: 58)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private var editorControls: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 6) {
+                ForEach(DrawingTool.allCases, id: \.rawValue) { tool in
+                    Button {
+                        if isEditingText { commitCurrentText() }
+                        currentTool = tool
+                    } label: {
+                        Image(systemName: tool.rawValue)
+                            .font(.system(size: 15, weight: .medium))
+                            .frame(width: 34, height: 34)
+                            .foregroundStyle(currentTool == tool ? Color.accentColor : Color.primary)
+                            .background(currentTool == tool ? Color.accentColor.opacity(0.14) : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help(tool.label)
+                }
+            }
+
+            Divider().frame(height: 28)
+
+            HStack(spacing: 8) {
+                ForEach(availableColors, id: \.self) { color in
+                    Button {
+                        currentColor = color
+                    } label: {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 20, height: 20)
+                            .overlay {
+                                if color == .white {
+                                    Circle().stroke(Color.black.opacity(0.16), lineWidth: 1)
+                                }
+                                if currentColor == color {
+                                    Circle().stroke(Color.primary.opacity(0.55), lineWidth: 2)
+                                        .padding(-3)
+                                }
+                            }
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Drawing color")
+                }
+            }
+
+            Divider().frame(height: 28)
+
+            HStack(spacing: 8) {
+                Image(systemName: "lineweight")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                Slider(value: $lineWidth, in: 1...10, step: 1)
+                    .frame(width: 90)
+            }
+            .help("Line width")
+
+            Divider().frame(height: 28)
+
+            HStack(spacing: 4) {
+                toolbarIconButton("arrow.uturn.backward", help: "Undo (Cmd+Z)", disabled: !history.canUndo) {
+                    history.undo()
+                }
+                toolbarIconButton("arrow.uturn.forward", help: "Redo (Cmd+Shift+Z)", disabled: !history.canRedo) {
+                    history.redo()
+                }
+            }
+        }
+    }
+
+    private func actionButton(
+        _ systemName: String,
+        help: String,
+        foreground: Color,
+        background: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(foreground)
+                .frame(width: 36, height: 34)
+                .background(background)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private func toolbarIconButton(
+        _ systemName: String,
+        help: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
     }
 
     // MARK: - Erase
@@ -437,23 +468,30 @@ struct InlineTextFieldView: View {
     let color: Color
     let fontSize: CGFloat
     let position: CGPoint
+    let imageSize: NSSize
     let onCommit: () -> Void
 
     var body: some View {
         GeometryReader { geo in
+            let scaleX = geo.size.width / max(imageSize.width, 1)
+            let scaleY = geo.size.height / max(imageSize.height, 1)
+            let displayPoint = CGPoint(x: position.x * scaleX, y: position.y * scaleY)
+            let remainingWidth = max(80, geo.size.width - displayPoint.x - 12)
+            let fieldWidth = max(80, min(remainingWidth, 400))
+
             TextField("", text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: fontSize, weight: .medium))
+                .font(.system(size: max(12, fontSize * min(scaleX, scaleY)), weight: .medium))
                 .foregroundStyle(color)
                 .focused(isFocused)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
                 .background(Color.white.opacity(0.8))
                 .border(color.opacity(0.5), width: 1)
-                .frame(width: max(120, min(geo.size.width - position.x - 20, 400)))
+                .frame(width: fieldWidth)
                 .position(
-                    x: position.x + max(60, min((geo.size.width - position.x - 20) / 2, 200)),
-                    y: geo.size.height - position.y
+                    x: min(geo.size.width - fieldWidth / 2, displayPoint.x + fieldWidth / 2),
+                    y: geo.size.height - displayPoint.y
                 )
                 .onSubmit {
                     onCommit()
@@ -472,12 +510,14 @@ struct DrawingCanvasView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> DrawingCanvasNSView {
         let view = DrawingCanvasNSView()
+        view.imageSize = imageSize
         return view
     }
 
     func updateNSView(_ nsView: DrawingCanvasNSView, context: Context) {
         nsView.elements = elements
         nsView.currentElement = currentElement
+        nsView.imageSize = imageSize
         nsView.needsDisplay = true
     }
 }
@@ -485,8 +525,15 @@ struct DrawingCanvasView: NSViewRepresentable {
 class DrawingCanvasNSView: NSView {
     var elements: [DrawingElement] = []
     var currentElement: DrawingElement?
+    var imageSize: NSSize = .zero
 
     override func draw(_ dirtyRect: NSRect) {
+        guard imageSize.width > 0, imageSize.height > 0,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.scaleBy(x: bounds.width / imageSize.width, y: bounds.height / imageSize.height)
+        defer { context.restoreGState() }
+
         let allElements = currentElement != nil ? elements + [currentElement!] : elements
         for element in allElements {
             drawElement(element)
@@ -566,6 +613,7 @@ struct DrawingInteractionView: NSViewRepresentable {
     let tool: DrawingTool
     let color: Color
     let lineWidth: CGFloat
+    let imageSize: NSSize
     let isEditingText: Bool
     let onElementStarted: (DrawingElement) -> Void
     let onElementUpdated: (DrawingElement) -> Void
@@ -574,6 +622,7 @@ struct DrawingInteractionView: NSViewRepresentable {
     func makeNSView(context: Context) -> DrawingInteractionNSView {
         let view = DrawingInteractionNSView()
         view.delegate = context.coordinator
+        view.imageSize = imageSize
         return view
     }
 
@@ -582,6 +631,7 @@ struct DrawingInteractionView: NSViewRepresentable {
         context.coordinator.color = NSColor(color)
         context.coordinator.lineWidth = lineWidth
         context.coordinator.isEditingText = isEditingText
+        nsView.imageSize = imageSize
     }
 
     func makeCoordinator() -> Coordinator {
@@ -655,21 +705,28 @@ struct DrawingInteractionView: NSViewRepresentable {
 
 class DrawingInteractionNSView: NSView {
     weak var delegate: DrawingInteractionView.Coordinator?
+    var imageSize: NSSize = .zero
 
     override var acceptsFirstResponder: Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        delegate?.mouseDown(at: point)
+        delegate?.mouseDown(at: imagePoint(for: event))
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        delegate?.mouseDragged(to: point)
+        delegate?.mouseDragged(to: imagePoint(for: event))
     }
 
     override func mouseUp(with event: NSEvent) {
+        delegate?.mouseUp(at: imagePoint(for: event))
+    }
+
+    private func imagePoint(for event: NSEvent) -> CGPoint {
         let point = convert(event.locationInWindow, from: nil)
-        delegate?.mouseUp(at: point)
+        guard bounds.width > 0, bounds.height > 0 else { return point }
+        return CGPoint(
+            x: point.x * imageSize.width / bounds.width,
+            y: point.y * imageSize.height / bounds.height
+        )
     }
 }
