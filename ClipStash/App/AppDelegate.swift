@@ -37,6 +37,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.show()
 
         setupStatusItem()
+        // A selected Gemma model is warmed asynchronously at launch. This is
+        // intentionally limited to Gemma; Qwen retains its existing lazy start.
+        LocalModelManager.shared.warmUpSelectedModelIfNeeded()
 
         keyboardShortcut = GlobalKeyboardShortcut(
             toggleAction: { [weak self] in self?.panelController.toggle() },
@@ -60,6 +63,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        meetingAssistant.stop()
+        LocalModelManager.shared.shutdownServer()
         monitor.stop()
         keyboardShortcut?.unregister()
         PersistenceManager.save(items: store.items)

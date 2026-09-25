@@ -4,29 +4,47 @@ import Security
 enum AISettings {
     private static let service = "com.clipstash.app.ai"
     private static let openAIAccount = "openai-api-key"
+    private static let huggingFaceAccount = "huggingface-read-token"
 
     static func openAIAPIKey() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let key = String(data: data, encoding: .utf8),
-              !key.isEmpty else { return nil }
-        return key
+        value(account: openAIAccount)
     }
 
     static func saveOpenAIAPIKey(_ key: String) throws {
+        try save(key, account: openAIAccount)
+    }
+
+    static func huggingFaceAccessToken() -> String? {
+        value(account: huggingFaceAccount)
+    }
+
+    static func saveHuggingFaceAccessToken(_ token: String) throws {
+        try save(token, account: huggingFaceAccount)
+    }
+
+    private static func value(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let value = String(data: data, encoding: .utf8),
+              !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func save(_ key: String, account: String) throws {
         let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIAccount
+            kSecAttrAccount as String: account
         ]
 
         if trimmedKey.isEmpty {

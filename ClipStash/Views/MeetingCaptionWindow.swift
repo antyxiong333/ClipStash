@@ -144,8 +144,12 @@ private struct CaptionSections: View {
                         ForEach(service.captionTimeline.rows) { pair in
                             VStack(alignment: .leading, spacing: 7) {
                                 if !translated {
-                                    CaptionWordFlow(text: pair.source) { word in
-                                        service.lookUpWord(word, in: pair.source)
+                                    // Keep the source line paired with the exact snapshot used
+                                    // for the translation. `source` may already contain a newer
+                                    // speech-recognition revision while the model is still
+                                    // translating the previous one.
+                                    CaptionWordFlow(text: pair.displayedSource) { word in
+                                        service.lookUpWord(word, in: pair.displayedSource)
                                     }
                                 } else if !pair.translation.isEmpty {
                                     Text(pair.translation).font(.system(size: 14))

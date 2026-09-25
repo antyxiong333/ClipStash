@@ -33,8 +33,10 @@ final class MeetingAssistantService: NSObject, ObservableObject {
     private var activeInsightID: UUID?
     private var pendingInsight: (text: String, isFinal: Bool)?
     private var activeTranslationID: UUID?
+    private var activeTranslationJob: CaptionTimeline.Job?
     private var recentUtterances: [String] = []
     private var wordLookupTasks: [UUID: Task<Void, Never>] = [:]
+    private var lastQueuedPartialUnits = 0
 
     func start() {
         guard !isRunning else { return }
@@ -69,6 +71,8 @@ final class MeetingAssistantService: NSObject, ObservableObject {
         activeInsightID = nil
         pendingInsight = nil
         activeTranslationID = nil
+        activeTranslationJob = nil
+        lastQueuedPartialUnits = 0
         recognitionRequest = nil
         recognitionTask = nil
         isRunning = false
@@ -251,19 +255,57 @@ final class MeetingAssistantService: NSObject, ObservableObject {
     private func scheduleTranslation(for text: String, isFinal: Bool) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        captionTimeline.ingest(trimmed, isFinal: isFinal)
+        let shouldQueue = shouldQueueTranslation(for: trimmed, isFinal: isFinal)
+        captionTimeline.ingest(trimmed, isFinal: isFinal, queueTranslation: shouldQueue)
         guard LocalModelManager.shared.useLocalModel || AISettings.openAIAPIKey() != nil else {
             statusMessage = "Enable a local model or configure an API key in Settings."
             return
         }
+        guard shouldQueue else { return }
+
+        // A final speech result supersedes an in-flight short partial from the
+        // same sentence. This avoids making the user wait for an obsolete
+        // translation before the completed sentence can start.
+        if isFinal,
+           let active = activeTranslationJob,
+           !active.isFinal,
+           active.rowID == captionTimeline.rows.last?.id {
+            cancelActiveTranslation()
+        }
         guard activeTranslationID == nil, let job = captionTimeline.next() else { return }
         startTranslation(job)
+    }
+
+    /// The recognizer can revise text every few words. Translating each tiny
+    /// revision makes a local model permanently trail the speaker. We submit
+    /// immediately at a clause boundary, otherwise after a meaningful 6-word
+    /// (or CJK-character) increment; final results always go through.
+    private func shouldQueueTranslation(for text: String, isFinal: Bool) -> Bool {
+        if isFinal {
+            lastQueuedPartialUnits = 0
+            return true
+        }
+        let whitespaceWords = text.split(whereSeparator: { $0.isWhitespace }).count
+        let semanticUnits = max(whitespaceWords, text.count / 3)
+        let endsClause = text.last.map { ".,;:!?。，“”！？；：".contains($0) } ?? false
+        let hasMeaningfulIncrement = semanticUnits >= 6 && semanticUnits - lastQueuedPartialUnits >= 6
+        guard endsClause || hasMeaningfulIncrement else { return false }
+        lastQueuedPartialUnits = semanticUnits
+        return true
+    }
+
+    private func cancelActiveTranslation() {
+        activeTranslationID = nil
+        activeTranslationJob = nil
+        translationTask?.cancel()
+        translationTask = nil
     }
 
     private func startTranslation(_ job: CaptionTimeline.Job) {
         let text = job.source
         let requestID = UUID()
         activeTranslationID = requestID
+        activeTranslationJob = job
         let useLocalModel = LocalModelManager.shared.useLocalModel
         let apiKey = AISettings.openAIAPIKey()
         // Keep the previous Chinese line visible until the new stream yields its
@@ -300,6 +342,7 @@ final class MeetingAssistantService: NSObject, ObservableObject {
     private func finishTranslation(requestID: UUID) {
         guard activeTranslationID == requestID else { return }
         activeTranslationID = nil
+        activeTranslationJob = nil
         translationTask = nil
         if let next = captionTimeline.next() {
             startTranslation(next)

@@ -38,4 +38,14 @@ final class CaptionTimelineTests: XCTestCase {
         XCTAssertEqual(timeline.rows[1].translation, "")
         XCTAssertNotEqual(timeline.rows[0].id, timeline.rows[1].id)
     }
+
+    func testUnqueuedPartialStillUpdatesSourceButDoesNotCreateWork() {
+        var timeline = CaptionTimeline()
+        timeline.ingest("Short partial", isFinal: false, queueTranslation: false)
+        XCTAssertEqual(timeline.rows.map(\.source), ["Short partial"])
+        XCTAssertNil(timeline.next())
+
+        timeline.ingest("Short partial completed.", isFinal: true)
+        XCTAssertEqual(timeline.next()?.source, "Short partial completed.")
+    }
 }

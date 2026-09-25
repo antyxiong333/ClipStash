@@ -30,10 +30,11 @@ The existing v1.1.0 DMG is a legacy unsigned build and is blocked by Gatekeeper 
 
 ## Features / 功能
 
-### v1.4.22 - Live Captions, Local AI & Display Language / 实时字幕、本地 AI 与界面语言
+### v1.4.27 - Live Captions, Local AI & Display Language / 实时字幕、本地 AI 与界面语言
 
-- **Live caption translation** / 实时字幕翻译：shows source and target captions in separate, stable sections; the quick translation path streams from a local model or configured API / 原文与译文分区显示；快速翻译可使用本地模型或已配置的 API 流式输出
-- **Local inference, no Ollama** / 内置本地推理：downloads the optional Qwen3 4B Q4 model once and runs it with the bundled llama.cpp runtime / 可选下载 Qwen3 4B Q4 模型，使用应用内置 llama.cpp 运行时，不依赖 Ollama
+- **Live caption translation** / 实时字幕翻译：source and target captions remain paired to the same recognized-speech snapshot; the fast path only submits meaningful speech segments and drops obsolete partial work / 原文与译文始终显示同一份语音识别快照；快速路径只处理有语义的片段并丢弃过期任务
+- **Local inference, no Ollama** / 内置本地推理：choose Qwen3 4B Q4 or Gemma 3 4B Q4 locally, using the bundled llama.cpp runtime / 可在本地选择 Qwen3 4B Q4 或 Gemma 3 4B Q4，使用应用内置 llama.cpp 运行时，不依赖 Ollama
+- **Gemma Metal acceleration** / Gemma Metal 加速：Gemma pre-warms when enabled and uses full Apple Silicon Metal offload plus Flash Attention; Qwen keeps its original on-demand runtime configuration / 启用 Gemma 后会预热，并使用 Apple Silicon Metal 全层卸载与 Flash Attention；Qwen 保持原有的按需启动配置
 - **Caption modes** / 字幕模式：Auto prioritizes latency; Meeting adds terms, corrections and action items after final utterances; Video adds concepts and takeaways / 自动模式优先低延迟；会议与视频模式在句子结束后分别补充提示
 - **Dictionary hints** / 单词词典：click a source-language word to add a target-language translation to a newest-first history in Hints; Clear removes that history / 点击原文单词可在提示栏累计查询翻译，最新在最上方；Clear 可清空
 - **Chinese / English UI** / 中英文界面：Settings > Display language switches the Settings screen, core floating-panel actions, live-caption UI, and menu-bar menu without changing layout / 设置 > 显示语言可切换设置页、主面板常用操作、字幕窗口及菜单栏菜单，不改变布局
@@ -176,6 +177,7 @@ Only upload the DMG to GitHub Releases after the final `spctl` check reports `ac
 | Display language / 显示语言 | Settings > System > Display language / 设置 > 系统 > 显示语言 |
 | Caption mode / 字幕模式 | Settings > Live captions > Assistant mode / 设置 > 实时字幕 > 助手模式 |
 | Dictionary lookup / 单词查询 | Click a source caption word / 点击原文单词 |
+| Gemma setup / Gemma 设置 | Accept the Gemma license, save a Hugging Face **Read** token in Settings, then download / 接受 Gemma 许可，在设置中保存 Hugging Face **Read** Token 后下载 |
 
 ## Project Structure / 项目结构
 

@@ -13,6 +13,7 @@ struct ClipboardListView: View {
     @State private var launchAtLoginError: String?
     @State private var screenRecordingAllowed = ScreenCaptureService.hasPermission
     @State private var openAIKey = AISettings.openAIAPIKey() ?? ""
+    @State private var huggingFaceToken = AISettings.huggingFaceAccessToken() ?? ""
     @State private var apiKeyStatus: String?
     @State private var glossaryText = MeetingGlossary.text
     @State private var sourceLanguage = MeetingLanguageSettings.source
@@ -208,6 +209,36 @@ struct ClipboardListView: View {
 
                 SettingsCard(title: t("AI 与翻译", "AI & translation"), icon: "sparkles") {
                     VStack(alignment: .leading, spacing: 9) {
+                        Picker(t("本地模型", "Local model"), selection: Binding(
+                            get: { localModel.selectedModel },
+                            set: { localModel.select($0) }
+                        )) {
+                            ForEach(LocalModelManager.Model.allCases) { model in
+                                Text(model.displayName).tag(model)
+                            }
+                        }
+                        if localModel.selectedModel.requiresHuggingFaceToken {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(t("Gemma 首次下载需要先接受 Google 许可，并提供 Hugging Face 只读 Token。", "Gemma requires accepting Google's license and a Hugging Face read token for its first download."))
+                                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                                if let accessPage = localModel.selectedModel.accessPage {
+                                    Link(t("打开 Gemma 许可页面", "Open Gemma license page"), destination: accessPage)
+                                        .font(.system(size: 11))
+                                }
+                                SecureField(t("Hugging Face Read Token", "Hugging Face Read Token"), text: $huggingFaceToken)
+                                    .textFieldStyle(.roundedBorder)
+                                Button(t("保存 Token", "Save token")) {
+                                    do {
+                                        try AISettings.saveHuggingFaceAccessToken(huggingFaceToken)
+                                        apiKeyStatus = t("Hugging Face Token 已安全保存。", "Hugging Face token saved securely.")
+                                    } catch { apiKeyStatus = error.localizedDescription }
+                                }
+                                .controlSize(.mini)
+                            }
+                            .padding(8)
+                            .background(Color.orange.opacity(0.07))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
                         HStack(spacing: 6) {
                             Circle().fill(localModel.state == .ready ? Color.green : Color.secondary.opacity(0.45)).frame(width: 7, height: 7)
                             Text(localModel.statusText).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -217,13 +248,15 @@ struct ClipboardListView: View {
                             } else if case .downloading = localModel.state {
                                 ProgressView().controlSize(.small)
                             } else {
-                                Button(t("下载模型", "Download model")) { localModel.downloadDefaultModel() }.controlSize(.small)
+                                Button(t("下载模型", "Download model")) { localModel.downloadSelectedModel() }.controlSize(.small)
                             }
                         }
                         Toggle(t("使用本地模型", "Use local model"), isOn: $localModel.useLocalModel)
                             .disabled(localModel.state != .ready)
                             .font(.system(size: 12))
-                        Text(t("Qwen3 使用 ClipStash 内置引擎运行，不需要 Ollama。", "Qwen3 runs through ClipStash’s built-in engine; Ollama is not required."))
+                        Text(localModel.selectedModel == .qwen3_4b
+                             ? t("Qwen3 使用 ClipStash 内置引擎运行，不需要 Ollama。", "Qwen3 runs through ClipStash’s built-in engine; Ollama is not required.")
+                             : t("Gemma 使用 ClipStash 内置 llama.cpp/Metal 引擎运行，不需要 Ollama。", "Gemma runs through ClipStash’s built-in llama.cpp/Metal engine; Ollama is not required."))
                             .font(.system(size: 10)).foregroundStyle(.secondary)
                         Divider()
                         SecureField(t("OpenAI API Key（可选）", "OpenAI API key (optional)"), text: $openAIKey)

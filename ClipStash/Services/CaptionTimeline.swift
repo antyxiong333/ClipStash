@@ -21,7 +21,9 @@ struct CaptionTimeline {
     private(set) var pending: [Job] = []
     private var currentID: UUID?
 
-    mutating func ingest(_ text: String, isFinal: Bool) {
+    /// Updates the visible source immediately. The caller decides when a
+    /// partial result is substantial enough to become an inference job.
+    mutating func ingest(_ text: String, isFinal: Bool, queueTranslation: Bool = true) {
         let source = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty else { return }
         if currentID == nil {
@@ -33,10 +35,15 @@ struct CaptionTimeline {
             rows[index].source = source
             rows[index].isFinal = isFinal
         }
-        let job = Job(rowID: id, source: source, isFinal: isFinal)
-        if let index = pending.firstIndex(where: { $0.rowID == id }) {
-            pending[index] = job
-        } else { pending.append(job) }
+        if queueTranslation {
+            let job = Job(rowID: id, source: source, isFinal: isFinal)
+            // There is at most one waiting job per spoken sentence: when the
+            // recognizer revises its partial text, the model receives only the
+            // newest version rather than translating stale fragments in order.
+            if let index = pending.firstIndex(where: { $0.rowID == id }) {
+                pending[index] = job
+            } else { pending.append(job) }
+        }
         if isFinal { currentID = nil }
     }
 
