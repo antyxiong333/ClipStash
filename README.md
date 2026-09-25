@@ -30,6 +30,15 @@ The existing v1.1.0 DMG is a legacy unsigned build and is blocked by Gatekeeper 
 
 ## Features / 功能
 
+### v1.4.22 - Live Captions, Local AI & Display Language / 实时字幕、本地 AI 与界面语言
+
+- **Live caption translation** / 实时字幕翻译：shows source and target captions in separate, stable sections; the quick translation path streams from a local model or configured API / 原文与译文分区显示；快速翻译可使用本地模型或已配置的 API 流式输出
+- **Local inference, no Ollama** / 内置本地推理：downloads the optional Qwen3 4B Q4 model once and runs it with the bundled llama.cpp runtime / 可选下载 Qwen3 4B Q4 模型，使用应用内置 llama.cpp 运行时，不依赖 Ollama
+- **Caption modes** / 字幕模式：Auto prioritizes latency; Meeting adds terms, corrections and action items after final utterances; Video adds concepts and takeaways / 自动模式优先低延迟；会议与视频模式在句子结束后分别补充提示
+- **Dictionary hints** / 单词词典：click a source-language word to add a target-language translation to a newest-first history in Hints; Clear removes that history / 点击原文单词可在提示栏累计查询翻译，最新在最上方；Clear 可清空
+- **Chinese / English UI** / 中英文界面：Settings > Display language switches the Settings screen, core floating-panel actions, live-caption UI, and menu-bar menu without changing layout / 设置 > 显示语言可切换设置页、主面板常用操作、字幕窗口及菜单栏菜单，不改变布局
+- **Per-display editor placement** / 多显示器截图定位：screenshot editor placement continues to follow the display where the selection was made / 截图编辑器仍会在对应截图屏幕的位置打开
+
 ### v1.3.0 - Positioned Capture Editor / 原位截图编辑器
 
 - **Position-matched editor** / 原位编辑：reads the native screenshot selection rectangle and restores the editor window to the same bounds / 读取系统截图选区坐标，让编辑窗口以相同位置与大小打开
@@ -164,6 +173,9 @@ Only upload the DMG to GitHub Releases after the final `spctl` check reports `ac
 | Search / 搜索 | Type in the search bar |
 | Settings / 设置 | Click the gear icon |
 | Launch at login / 开机自动启动 | Settings > Launch at login |
+| Display language / 显示语言 | Settings > System > Display language / 设置 > 系统 > 显示语言 |
+| Caption mode / 字幕模式 | Settings > Live captions > Assistant mode / 设置 > 实时字幕 > 助手模式 |
+| Dictionary lookup / 单词查询 | Click a source caption word / 点击原文单词 |
 
 ## Project Structure / 项目结构
 
@@ -182,6 +194,11 @@ ClipStash/
     PasteboardReader.swift          # Content extraction / 内容提取
     PersistenceManager.swift        # JSON persistence / JSON 持久化
     ScreenCaptureService.swift      # Screenshot capture / 截图服务
+    CaptionTimeline.swift           # Stable source/translation rows / 稳定的原文译文行
+    DisplayLanguageSettings.swift   # UI language preference / 界面语言偏好
+    LocalModelManager.swift         # Bundled local model runtime / 内置本地模型运行时
+    MeetingAssistantService.swift   # Speech, translation, hints / 语音、翻译、提示
+    MeetingLanguageSettings.swift   # Caption languages and modes / 字幕语言与模式
   Views/
     FloatingPanel.swift             # NSPanel subclass / 浮动面板
     ClipboardListView.swift         # Main list view / 主列表视图
@@ -194,6 +211,13 @@ ClipStash/
 ```
 
 ## Changelog / 更新日志
+
+### v1.4.22 (2026-09-25)
+- Added live source/translation caption sections, streaming quick translation, and sentence-final slow insights / 增加原文译文字幕分区、流式快速翻译和句末慢速提示
+- Added optional built-in local Qwen3 inference with bundled runtime; model weights are managed in Application Support / 增加可选内置 Qwen3 本地推理，模型权重由应用在 Application Support 管理
+- Added Auto, Meeting and Video caption modes plus newest-first dictionary hints / 增加自动、会议、视频字幕模式和最新优先的单词词典提示
+- Redesigned Settings into caption, AI, permission, and system sections / 设置页重组为字幕、AI、权限和系统分区
+- Added a Chinese/English display-language preference that updates the Settings, core panel, live captions, and menu-bar menu / 增加中英文界面语言设置，同步更新设置页、主面板常用项、字幕窗口和菜单栏菜单
 
 ### v1.3.0 (2026-09-07)
 - Restore the editor window to the screenshot selection's position and size / 编辑窗口恢复到截图选区的位置与大小

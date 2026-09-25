@@ -4,27 +4,41 @@ import Combine
 import Foundation
 import Speech
 
+struct WordHint: Identifiable {
+    let id: UUID
+    let word: String
+    var detail: String
+    var isLoading: Bool
+}
+
 @MainActor
 final class MeetingAssistantService: NSObject, ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var transcript = "Waiting for speech…"
     @Published private(set) var translation = ""
+    @Published private(set) var captionTimeline = CaptionTimeline()
     @Published private(set) var correctionSuggestion = ""
     @Published private(set) var contextTerms: [String] = []
     @Published private(set) var actionItems: [String] = []
+    @Published private(set) var wordHints: [WordHint] = []
+    @Published private(set) var meetingMode = MeetingLanguageSettings.mode
     @Published private(set) var statusMessage = "Ready"
 
     private let audioEngine = AVAudioEngine()
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var recognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var insightTask: Task<Void, Never>?
+    private var translationTask: Task<Void, Never>?
     private var activeInsightID: UUID?
     private var pendingInsight: (text: String, isFinal: Bool)?
+    private var activeTranslationID: UUID?
     private var recentUtterances: [String] = []
+    private var wordLookupTasks: [UUID: Task<Void, Never>] = [:]
 
     func start() {
         guard !isRunning else { return }
+        recognizer = SFSpeechRecognizer(locale: Locale(identifier: MeetingLanguageSettings.source.speechLocale))
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized:
             requestMicrophoneAccess()
@@ -50,8 +64,11 @@ final class MeetingAssistantService: NSObject, ObservableObject {
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         insightTask?.cancel()
+        translationTask?.cancel()
+        captionTimeline.pause()
         activeInsightID = nil
         pendingInsight = nil
+        activeTranslationID = nil
         recognitionRequest = nil
         recognitionTask = nil
         isRunning = false
@@ -62,6 +79,54 @@ final class MeetingAssistantService: NSObject, ObservableObject {
         guard !correctionSuggestion.isEmpty else { return }
         transcript = correctionSuggestion
         correctionSuggestion = ""
+    }
+
+    func setMeetingMode(_ mode: MeetingLanguageSettings.Mode) {
+        meetingMode = mode
+        MeetingLanguageSettings.save(mode: mode)
+    }
+
+    func lookUpWord(_ word: String, in sentence: String) {
+        let cleanedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedWord.isEmpty else { return }
+
+        // Keep each click as a separate entry so the dictionary area becomes a
+        // newest-first lookup history instead of replacing the previous word.
+        let hintID = UUID()
+        wordHints.insert(WordHint(id: hintID, word: cleanedWord, detail: "", isLoading: true), at: 0)
+
+        let useLocalModel = LocalModelManager.shared.useLocalModel
+        let apiKey = AISettings.openAIAPIKey()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let hint = try await MeetingInferenceClient.wordHint(
+                    for: cleanedWord,
+                    targetLanguage: MeetingLanguageSettings.target.rawValue,
+                    apiKey: apiKey,
+                    useLocalModel: useLocalModel
+                )
+                guard !Task.isCancelled else { return }
+                self.updateWordHint(id: hintID, detail: hint)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.updateWordHint(id: hintID, detail: "Could not look up this word: \(error.localizedDescription)")
+            }
+            self.wordLookupTasks[hintID] = nil
+        }
+        wordLookupTasks[hintID] = task
+    }
+
+    func clearWordHints() {
+        wordLookupTasks.values.forEach { $0.cancel() }
+        wordLookupTasks.removeAll()
+        wordHints.removeAll()
+    }
+
+    private func updateWordHint(id: UUID, detail: String) {
+        guard let index = wordHints.firstIndex(where: { $0.id == id }) else { return }
+        wordHints[index].detail = detail
+        wordHints[index].isLoading = false
     }
 
     static func openMicrophonePrivacySettings() {
@@ -134,7 +199,10 @@ final class MeetingAssistantService: NSObject, ObservableObject {
                 let text = result.bestTranscription.formattedString
                 Task { @MainActor in
                     self.transcript = text
-                    self.scheduleInsight(for: text, isFinal: result.isFinal)
+                    self.scheduleTranslation(for: text, isFinal: result.isFinal)
+                    if result.isFinal {
+                        self.scheduleInsight(for: text, isFinal: true)
+                    }
                 }
             }
             if let error {
@@ -159,6 +227,7 @@ final class MeetingAssistantService: NSObject, ObservableObject {
     private func scheduleInsight(for text: String, isFinal: Bool) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
+        guard meetingMode != .automatic else { return }
 
         guard LocalModelManager.shared.useLocalModel || AISettings.openAIAPIKey() != nil else {
             translation = "Add an OpenAI API key in ClipStash Settings to translate and extract action items."
@@ -177,6 +246,68 @@ final class MeetingAssistantService: NSObject, ObservableObject {
         startInsight(for: trimmedText, isFinal: isFinal)
     }
 
+    // Fast path: partial speech results get a small, translation-only request.
+    // A single in-flight stream is kept so continuous speech never overwhelms the model.
+    private func scheduleTranslation(for text: String, isFinal: Bool) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        captionTimeline.ingest(trimmed, isFinal: isFinal)
+        guard LocalModelManager.shared.useLocalModel || AISettings.openAIAPIKey() != nil else {
+            statusMessage = "Enable a local model or configure an API key in Settings."
+            return
+        }
+        guard activeTranslationID == nil, let job = captionTimeline.next() else { return }
+        startTranslation(job)
+    }
+
+    private func startTranslation(_ job: CaptionTimeline.Job) {
+        let text = job.source
+        let requestID = UUID()
+        activeTranslationID = requestID
+        let useLocalModel = LocalModelManager.shared.useLocalModel
+        let apiKey = AISettings.openAIAPIKey()
+        // Keep the previous Chinese line visible until the new stream yields its
+        // first token; clearing here caused a noticeable flash on every partial caption.
+        statusMessage = "Translating…"
+        translationTask = Task { [weak self] in
+            guard let self else { return }
+            var latest = ""
+            var lastDisplay = Date.distantPast
+            do {
+                try await MeetingInferenceClient.streamTranslation(for: text, targetLanguage: MeetingLanguageSettings.target.rawValue, apiKey: apiKey, useLocalModel: useLocalModel) { partial in
+                    guard self.activeTranslationID == requestID else { return }
+                    latest = partial
+                    if Date().timeIntervalSince(lastDisplay) >= 0.1 {
+                        self.captionTimeline.show(partial, for: job)
+                        lastDisplay = Date()
+                    }
+                }
+                guard self.activeTranslationID == requestID, !Task.isCancelled else { return }
+                if latest.isEmpty {
+                    self.captionTimeline.fail("No translation returned. Try again.", for: job)
+                } else {
+                    self.captionTimeline.show(latest, for: job, complete: true)
+                }
+            } catch {
+                guard !Task.isCancelled, self.activeTranslationID == requestID else { return }
+                self.statusMessage = "Translation failed: \(error.localizedDescription)"
+                self.captionTimeline.fail(error.localizedDescription, for: job)
+            }
+            self.finishTranslation(requestID: requestID)
+        }
+    }
+
+    private func finishTranslation(requestID: UUID) {
+        guard activeTranslationID == requestID else { return }
+        activeTranslationID = nil
+        translationTask = nil
+        if let next = captionTimeline.next() {
+            startTranslation(next)
+        } else if isRunning {
+            statusMessage = "Listening from microphone"
+        }
+    }
+
     private func startInsight(for text: String, isFinal: Bool) {
         let useLocalModel = LocalModelManager.shared.useLocalModel
         guard useLocalModel || AISettings.openAIAPIKey() != nil else { return }
@@ -188,12 +319,11 @@ final class MeetingAssistantService: NSObject, ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.statusMessage = "Translating…"
             do {
-                let insight = try await MeetingInferenceClient.insight(for: text, context: self.recentUtterances.suffix(3).joined(separator: "\n"), glossary: MeetingGlossary.terms, apiKey: apiKey, useLocalModel: useLocalModel)
+                let insight = try await MeetingInferenceClient.insight(for: text, context: self.recentUtterances.suffix(3).joined(separator: "\n"), glossary: MeetingGlossary.terms, targetLanguage: MeetingLanguageSettings.target.rawValue, mode: self.meetingMode, apiKey: apiKey, useLocalModel: useLocalModel)
                 guard !Task.isCancelled else { return }
                 // Do not replace the translation with one belonging to an older source
                 // sentence. The queued latest caption starts immediately below.
                 if self.transcript == text {
-                    self.translation = insight.translation
                     self.actionItems = insight.actionItems
                     self.contextTerms = insight.contextTerms
                     self.correctionSuggestion = insight.correction == text ? "" : insight.correction
@@ -231,12 +361,71 @@ private struct MeetingInsight {
     let actionItems: [String]
 }
 
+@MainActor
 private enum MeetingInferenceClient {
-    static func insight(for transcript: String, context: String, glossary: [String], apiKey: String?, useLocalModel: Bool) async throws -> MeetingInsight {
+    static func wordHint(for word: String, targetLanguage: String, apiKey: String?, useLocalModel: Bool) async throws -> String {
+        let prompt = "Translate this single dictionary entry into concise \(targetLanguage): \(word). Return only the translation. Do not explain it, add context, labels, punctuation, or extra words."
+        if useLocalModel {
+            let base = try await LocalModelManager.shared.serverURL()
+            var request = URLRequest(url: base.appendingPathComponent("v1/chat/completions"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "messages": [["role": "user", "content": prompt]],
+                "temperature": 0.1,
+                "max_tokens": 80,
+                "chat_template_kwargs": ["enable_thinking": false]
+            ])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+            let payload = try JSONDecoder().decode(LocalPayload.self, from: data)
+            return payload.choices.first?.message.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? "No explanation returned."
+        }
+        guard let apiKey else { throw URLError(.userAuthenticationRequired) }
+        return try await OpenAIMeetingClient.plainText(prompt: prompt, apiKey: apiKey)
+    }
+
+    static func streamTranslation(for transcript: String, targetLanguage: String, apiKey: String?, useLocalModel: Bool, onDelta: @escaping (String) -> Void) async throws {
+        if useLocalModel {
+            let base = try await LocalModelManager.shared.serverURL()
+            var request = URLRequest(url: base.appendingPathComponent("v1/chat/completions"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "messages": [["role": "user", "content": "Translate the following meeting caption into concise \(targetLanguage). Return only the translation, with no notes or labels. Caption: \(transcript)"]],
+                "temperature": 0.1,
+                "max_tokens": 64,
+                "stream": true,
+                // Qwen3 otherwise spends the small fast-path budget emitting
+                // reasoning_content before translation tokens.
+                "chat_template_kwargs": ["enable_thinking": false]
+            ])
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+            var result = ""
+            for try await line in bytes.lines {
+                guard line.hasPrefix("data: ") else { continue }
+                let value = String(line.dropFirst(6))
+                if value == "[DONE]" { break }
+                guard let data = value.data(using: .utf8),
+                      let event = try? JSONDecoder().decode(LocalStreamEvent.self, from: data),
+                      let delta = event.choices.first?.delta.content else { continue }
+                result += delta
+                onDelta(result)
+            }
+            return
+        }
+        guard let apiKey else { throw URLError(.userAuthenticationRequired) }
+        let insight = try await OpenAIMeetingClient.insight(for: transcript, context: "", glossary: [], targetLanguage: targetLanguage, mode: .automatic, apiKey: apiKey)
+        onDelta(insight.translation)
+    }
+
+    static func insight(for transcript: String, context: String, glossary: [String], targetLanguage: String, mode: MeetingLanguageSettings.Mode, apiKey: String?, useLocalModel: Bool) async throws -> MeetingInsight {
         if useLocalModel {
             let base = try await LocalModelManager.shared.serverURL()
             var request = URLRequest(url: base.appendingPathComponent("v1/chat/completions")); request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let prompt = "Return JSON only with translation, correction, context_terms, action_items. Translate this meeting caption to concise Simplified Chinese. Context: \(context). Glossary: \(glossary.joined(separator: ", ")). Caption: \(transcript)"
+            let modeInstruction = mode == .meeting ? "For action_items, list only explicit commitments or decisions." : "For action_items, list only concise video takeaways. For context_terms, include concepts worth explaining."
+            let prompt = "Return JSON only with translation, correction, context_terms, action_items. Translate this caption to concise \(targetLanguage). \(modeInstruction) Context: \(context). Glossary: \(glossary.joined(separator: ", ")). Caption: \(transcript)"
             request.httpBody = try JSONSerialization.data(withJSONObject: ["messages": [["role": "user", "content": prompt]], "temperature": 0.1, "max_tokens": 300])
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
@@ -244,7 +433,7 @@ private enum MeetingInferenceClient {
             let output = payload.choices.first?.message.content ?? "{}"
             return try decode(output, fallback: transcript)
         }
-        return try await OpenAIMeetingClient.insight(for: transcript, context: context, glossary: glossary, apiKey: apiKey!)
+        return try await OpenAIMeetingClient.insight(for: transcript, context: context, glossary: glossary, targetLanguage: targetLanguage, mode: mode, apiKey: apiKey!)
     }
     private static func decode(_ text: String, fallback: String) throws -> MeetingInsight {
         let json = text.firstIndex(of: "{").flatMap { start in text.lastIndex(of: "}").map { String(text[start...$0]) } } ?? text
@@ -252,10 +441,30 @@ private enum MeetingInferenceClient {
         return MeetingInsight(translation: value?["translation"] as? String ?? fallback, correction: value?["correction"] as? String ?? fallback, contextTerms: value?["context_terms"] as? [String] ?? [], actionItems: value?["action_items"] as? [String] ?? [])
     }
     private struct LocalPayload: Decodable { struct Choice: Decodable { struct Message: Decodable { let content: String }; let message: Message }; let choices: [Choice] }
+    private struct LocalStreamEvent: Decodable { struct Choice: Decodable { struct Delta: Decodable { let content: String? }; let delta: Delta }; let choices: [Choice] }
 }
 
 private enum OpenAIMeetingClient {
-    static func insight(for transcript: String, context: String, glossary: [String], apiKey: String) async throws -> MeetingInsight {
+    static func plainText(prompt: String, apiKey: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": "gpt-5-mini",
+            "store": false,
+            "input": prompt
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError(message: String(data: data, encoding: .utf8) ?? "Server error")
+        }
+        let payload = try JSONDecoder().decode(ResponsePayload.self, from: data)
+        let output = payload.output.compactMap(\.content).flatMap { $0 }.compactMap(\.text).joined(separator: "\n")
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func insight(for transcript: String, context: String, glossary: [String], targetLanguage: String, mode: MeetingLanguageSettings.Mode, apiKey: String) async throws -> MeetingInsight {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -281,7 +490,7 @@ private enum OpenAIMeetingClient {
                 "schema": schema
             ]],
             "input": """
-            Translate the current meeting caption into concise Simplified Chinese. Use the glossary and recent context only to improve spelling of proper nouns and technical terms. Never invent facts. Return the original caption as correction when no correction is needed. Only list explicit commitments as action items.
+            Translate the current caption into concise \(targetLanguage). Use the glossary and recent context only to improve spelling of proper nouns and technical terms. Never invent facts. Return the original caption as correction when no correction is needed. \(mode == .meeting ? "Only list explicit commitments or decisions as action items." : "Use action items for concise video takeaways and context terms for concepts worth explaining.")
 
             Glossary: \(glossary.joined(separator: ", "))
             Recent context: \(context)

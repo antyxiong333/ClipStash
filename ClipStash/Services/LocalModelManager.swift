@@ -12,6 +12,7 @@ final class LocalModelManager: ObservableObject {
     private var downloadTask: URLSessionDownloadTask?
     private var observation: NSKeyValueObservation?
     private var server: Process?
+    private let serverPort = 11436
 
     private init() {
         useLocalModel = UserDefaults.standard.bool(forKey: "useLocalMeetingModel")
@@ -46,14 +47,25 @@ final class LocalModelManager: ObservableObject {
     }
 
     func serverURL() async throws -> URL {
-        if server?.isRunning == true { return URL(string: "http://127.0.0.1:11435")! }
+        let baseURL = URL(string: "http://127.0.0.1:\(serverPort)")!
+        if await isHealthy(baseURL) { return baseURL }
         guard state == .ready, let executable = Bundle.main.resourceURL?.appendingPathComponent("LocalInference/llama-server") else { throw LocalError.runtimeUnavailable }
         let process = Process(); process.executableURL = executable
-        process.arguments = ["--model", Self.modelURL.path, "--host", "127.0.0.1", "--port", "11435", "--ctx-size", "4096", "--no-webui"]
+        process.arguments = ["--model", Self.modelURL.path, "--host", "127.0.0.1", "--port", "\(serverPort)", "--ctx-size", "4096", "--no-webui"]
         process.environment = ProcessInfo.processInfo.environment.merging(["DYLD_LIBRARY_PATH": executable.deletingLastPathComponent().path]) { _, new in new }
         try process.run(); server = process
-        for _ in 0..<50 { try await Task.sleep(for: .milliseconds(100)); if process.isRunning { return URL(string: "http://127.0.0.1:11435")! } }
+        for _ in 0..<300 {
+            try await Task.sleep(for: .milliseconds(100))
+            if await isHealthy(baseURL) { return baseURL }
+            if !process.isRunning { break }
+        }
         throw LocalError.serverDidNotStart
+    }
+    private func isHealthy(_ baseURL: URL) async -> Bool {
+        do {
+            let (_, response) = try await URLSession.shared.data(from: baseURL.appendingPathComponent("health"))
+            return (response as? HTTPURLResponse)?.statusCode == 200
+        } catch { return false }
     }
     enum LocalError: LocalizedError { case runtimeUnavailable, serverDidNotStart; var errorDescription: String? { self == .runtimeUnavailable ? "Local inference runtime or model is unavailable." : "Local model server did not start." } }
 }

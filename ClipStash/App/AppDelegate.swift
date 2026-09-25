@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.0"
@@ -16,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var meetingCaptionWindow: MeetingCaptionWindow?
     var floatingScreenshots: [ScreenshotFloatingWindow] = []
     private var restorePanelAfterCapture = false
+    private var displayLanguageCancellable: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -191,7 +193,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image?.isTemplate = true
         }
 
+        // NSMenu titles are not SwiftUI views, so rebuild this menu whenever
+        // the shared display-language preference changes.
+        displayLanguageCancellable = DisplayLanguageSettings.shared.$language
+            .sink { [weak self] _ in self?.updateStatusMenu() }
+    }
+
+    private func updateStatusMenu() {
         let menu = NSMenu()
+        let isChinese = DisplayLanguageSettings.shared.language == .chinese
 
         // Version header
         let versionItem = NSMenuItem(title: "ClipStash v\(appVersion)", action: nil, keyEquivalent: "")
@@ -199,15 +209,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(versionItem)
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Show/Hide Panel", action: #selector(togglePanel), keyEquivalent: "")
+        menu.addItem(withTitle: isChinese ? "显示/隐藏面板" : "Show/Hide Panel", action: #selector(togglePanel), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Screenshot", action: #selector(takeScreenshot), keyEquivalent: "")
-            .target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
+        menu.addItem(withTitle: isChinese ? "截图" : "Screenshot", action: #selector(takeScreenshot), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit ClipStash", action: #selector(quitApp), keyEquivalent: "q")
+        menu.addItem(withTitle: isChinese ? "清除历史记录" : "Clear History", action: #selector(clearHistory), keyEquivalent: "")
+            .target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: isChinese ? "退出 ClipStash" : "Quit ClipStash", action: #selector(quitApp), keyEquivalent: "q")
             .target = self
 
         statusItem.menu = menu
