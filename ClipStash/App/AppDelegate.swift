@@ -3,6 +3,7 @@ import SwiftUI
 
 let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.0"
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     let store = ClipboardStore()
@@ -10,7 +11,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let panelController = FloatingPanelController()
     var keyboardShortcut: GlobalKeyboardShortcut?
     let captureService = ScreenCaptureService()
+    let meetingAssistant = MeetingAssistantService()
     var editorWindow: ScreenshotEditorWindow?
+    var meetingCaptionWindow: MeetingCaptionWindow?
     var floatingScreenshots: [ScreenshotFloatingWindow] = []
     private var restorePanelAfterCapture = false
 
@@ -25,7 +28,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         store.loadFromDisk()
         monitor.start()
 
-        let contentView = ClipboardListView(store: store)
+        let contentView = ClipboardListView(store: store, onToggleMeeting: { [weak self] in
+            self?.toggleMeetingCaptions()
+        })
         panelController.setupPanel(with: contentView)
         panelController.show()
 
@@ -121,7 +126,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onPin: { [weak self] finalImage in
                 self?.saveScreenshot(finalImage)
-                self?.pinImage(finalImage)
+                self?.pinImage(finalImage, sourceRect: screenshot.screenRect)
                 self?.editorWindow = nil
                 self?.panelController.show()
             }
@@ -148,8 +153,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pb.setData(pngData, forType: .png)
     }
 
-    private func pinImage(_ image: NSImage) {
-        let floatingWindow = ScreenshotFloatingWindow(image: image)
+    private func pinImage(_ image: NSImage, sourceRect: NSRect? = nil) {
+        let floatingWindow = ScreenshotFloatingWindow(image: image, sourceRect: sourceRect)
         floatingWindow.onClose = { [weak self, weak floatingWindow] in
             self?.floatingScreenshots.removeAll { $0 === floatingWindow }
         }
@@ -160,6 +165,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func pinImageItem(_ item: ClipboardItem) {
         guard let data = item.imageData, let image = NSImage(data: data) else { return }
         pinImage(image)
+    }
+
+    private func toggleMeetingCaptions() {
+        if let meetingCaptionWindow, meetingCaptionWindow.isVisible {
+            meetingCaptionWindow.close()
+            self.meetingCaptionWindow = nil
+            return
+        }
+
+        let window = MeetingCaptionWindow(service: meetingAssistant)
+        meetingCaptionWindow = window
+        window.makeKeyAndOrderFront(nil)
+        meetingAssistant.start()
     }
 
     // MARK: - Status Bar

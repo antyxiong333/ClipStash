@@ -9,9 +9,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.clipstash.app</string>
     <key>CFBundleVersion</key>
-	<string>1.3.0</string>
+	<string>1.4.3</string>
     <key>CFBundleShortVersionString</key>
-	<string>1.3.0</string>
+	<string>1.4.3</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
@@ -22,7 +22,11 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>ClipStash needs Screen Recording permission to capture screenshots.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>ClipStash needs Screen Recording permission to capture screenshots.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ClipStash uses the microphone to provide live meeting captions when you start the feature.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>ClipStash uses Speech Recognition to turn meeting audio into live captions when you start the feature.</string>
 </dict>
 </plist>

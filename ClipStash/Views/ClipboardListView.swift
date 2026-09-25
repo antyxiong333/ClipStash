@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ClipboardListView: View {
     @Bindable var store: ClipboardStore
+    let onToggleMeeting: () -> Void
 
     @State private var showClearConfirmation = false
     @State private var copiedItemId: UUID?
@@ -11,6 +12,10 @@ struct ClipboardListView: View {
     @State private var launchAtLoginStatus = LaunchAtLoginManager.statusDescription
     @State private var launchAtLoginError: String?
     @State private var screenRecordingAllowed = ScreenCaptureService.hasPermission
+    @State private var openAIKey = AISettings.openAIAPIKey() ?? ""
+    @State private var apiKeyStatus: String?
+    @State private var glossaryText = MeetingGlossary.text
+    @ObservedObject private var localModel = LocalModelManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,6 +97,15 @@ struct ClipboardListView: View {
                 .buttonStyle(.plain)
                 .help("Global Screenshot (Cmd+Ctrl+S)")
                 .accessibilityLabel("Screenshot")
+
+                Button(action: onToggleMeeting) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Start live meeting captions")
+                .accessibilityLabel("Live meeting captions")
 
                 // Pin filter
                 Button {
@@ -186,6 +200,95 @@ struct ClipboardListView: View {
                             .foregroundStyle(.red)
                     }
                 }
+                .padding(12)
+                .background(Color.black.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Offline meeting model")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Qwen3 4B uses the inference runtime built into ClipStash. No Ollama is required. The model downloads once to ClipStash Application Support.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Circle().fill(localModel.state == .ready ? Color.green : Color.secondary.opacity(0.45)).frame(width: 6, height: 6)
+                        Text(localModel.statusText).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Spacer()
+                        if localModel.state == .ready {
+                            Button("Remove") { localModel.removeDefaultModel() }.font(.system(size: 11))
+                        } else if case .downloading = localModel.state {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button("Download model") { localModel.downloadDefaultModel() }.font(.system(size: 11))
+                        }
+                    }
+                    Toggle("Use local model for meeting captions", isOn: $localModel.useLocalModel)
+                        .disabled(localModel.state != .ready)
+                        .font(.system(size: 12))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.black.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("AI meeting assistant")
+                        .font(.system(size: 13, weight: .medium))
+                    SecureField("OpenAI API key", text: $openAIKey)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("Save API Key") {
+                            do {
+                                try AISettings.saveOpenAIAPIKey(openAIKey)
+                                apiKeyStatus = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "API key removed." : "Saved securely in Keychain."
+                            } catch {
+                                apiKeyStatus = error.localizedDescription
+                            }
+                        }
+                        .font(.system(size: 12))
+                        Button("Start live captions", action: onToggleMeeting)
+                            .font(.system(size: 12))
+                    }
+                    HStack(spacing: 8) {
+                        Button("Microphone Settings") {
+                            MeetingAssistantService.openMicrophonePrivacySettings()
+                        }
+                        Button("Speech Recognition Settings") {
+                            MeetingAssistantService.openSpeechRecognitionPrivacySettings()
+                        }
+                    }
+                    .font(.system(size: 12))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Meeting glossary")
+                            .font(.system(size: 12, weight: .medium))
+                        TextEditor(text: $glossaryText)
+                            .font(.system(size: 11))
+                            .frame(height: 54)
+                            .padding(4)
+                            .background(.quaternary)
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                        HStack {
+                            Text("One person, company, or term per line.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Save glossary") {
+                                MeetingGlossary.save(text: glossaryText)
+                                apiKeyStatus = "Glossary saved."
+                            }
+                            .font(.system(size: 11))
+                        }
+                    }
+                    if let apiKeyStatus {
+                        Text(apiKeyStatus)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Uses your microphone for live English captions. Final utterances are sent to OpenAI only when an API key is configured; audio is not saved by ClipStash.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .background(Color.black.opacity(0.04))
                 .clipShape(RoundedRectangle(cornerRadius: 8))

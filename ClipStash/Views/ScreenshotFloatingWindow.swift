@@ -6,7 +6,9 @@ class ScreenshotFloatingWindow: NSPanel {
     private let screenshotImage: NSImage
     var onClose: (() -> Void)?
 
-    init(image: NSImage) {
+    /// - Parameter sourceRect: The original selection in AppKit desktop coordinates.
+    ///   Supplying it keeps a pinned capture on the display where it was taken.
+    init(image: NSImage, sourceRect: NSRect? = nil) {
         self.screenshotImage = image
 
         // Scale to reasonable size
@@ -36,13 +38,12 @@ class ScreenshotFloatingWindow: NSPanel {
         self.hasShadow = true
         self.minSize = NSSize(width: 100, height: 80)
 
-        // Position near center-right
-        if let screen = NSScreen.main {
-            let sf = screen.visibleFrame
-            let x = sf.maxX - w - 40
-            let y = sf.midY - h / 2
-            setFrameOrigin(NSPoint(x: x, y: y))
-        }
+        setFrameOrigin(Self.initialOrigin(
+            windowSize: NSSize(width: w, height: h),
+            sourceRect: sourceRect,
+            screens: NSScreen.screens,
+            pointerLocation: NSEvent.mouseLocation
+        ))
 
         let view = ScreenshotPinnedView(
             image: image,
@@ -55,6 +56,44 @@ class ScreenshotFloatingWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    static func initialOrigin(
+        windowSize: NSSize,
+        sourceRect: NSRect?,
+        screens: [NSScreen],
+        pointerLocation: NSPoint
+    ) -> NSPoint {
+        let screen = screen(containing: sourceRect, in: screens)
+            ?? screens.first(where: { $0.frame.contains(pointerLocation) })
+            ?? NSScreen.main
+            ?? screens.first
+        guard let screen else { return .zero }
+
+        let visibleFrame = screen.visibleFrame
+        let preferredOrigin: NSPoint
+        if let sourceRect {
+            // Keep a partial capture at its original desktop position where
+            // possible, while ensuring the smaller pinned window stays visible.
+            preferredOrigin = sourceRect.origin
+        } else {
+            preferredOrigin = NSPoint(
+                x: visibleFrame.maxX - windowSize.width - 40,
+                y: visibleFrame.midY - windowSize.height / 2
+            )
+        }
+
+        return NSPoint(
+            x: min(max(preferredOrigin.x, visibleFrame.minX + 12), visibleFrame.maxX - windowSize.width - 12),
+            y: min(max(preferredOrigin.y, visibleFrame.minY + 12), visibleFrame.maxY - windowSize.height - 12)
+        )
+    }
+
+    private static func screen(containing rect: NSRect?, in screens: [NSScreen]) -> NSScreen? {
+        guard let rect else { return nil }
+        return screens.max {
+            $0.frame.intersection(rect).area < $1.frame.intersection(rect).area
+        }
+    }
 
     override func close() {
         onClose?()
@@ -75,6 +114,10 @@ class ScreenshotFloatingWindow: NSPanel {
         onClose?()
         orderOut(nil)
     }
+}
+
+private extension NSRect {
+    var area: CGFloat { isNull ? 0 : width * height }
 }
 
 // MARK: - Pinned View

@@ -10,6 +10,7 @@ let package = Package(
             path: "ClipStash",
             exclude: [
                 "Resources/Info.plist",
+                "Resources/ClipStash.entitlements",
                 "Resources/Assets.xcassets",
                 "Resources/AppIcon.icns",
                 "Resources/AppIcon.iconset"

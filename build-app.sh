@@ -11,6 +11,7 @@ APP_DIR="$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+ENTITLEMENTS_PATH="ClipStash/Resources/ClipStash.entitlements"
 
 echo "Generating app icon..."
 swift scripts/generate-app-icon.swift
@@ -34,6 +35,12 @@ if [ -f "ClipStash/Resources/AppIcon.icns" ]; then
     cp "ClipStash/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 fi
 
+# The lightweight local inference runtime is bundled; language-model weights
+# are downloaded by ClipStash on demand into Application Support.
+if [ -d "Vendor/llama-runtime" ]; then
+    cp -R "Vendor/llama-runtime" "$RESOURCES_DIR/LocalInference"
+fi
+
 # Prefer this Mac's Apple Development identity. Other machines fall back to
 # ad-hoc signing unless CLIPSTASH_SIGNING_IDENTITY is provided explicitly.
 LOCAL_DEVELOPMENT_IDENTITY="Apple Development: Created via API (GFK6Y5HGLR)"
@@ -46,13 +53,25 @@ else
 fi
 
 if [ "$SIGNING_IDENTITY" = "-" ]; then
-    codesign --force --sign - --identifier com.clipstash.app "$APP_DIR"
+    if [ -d "$RESOURCES_DIR/LocalInference" ]; then
+        find "$RESOURCES_DIR/LocalInference" -type f \( -name "*.dylib" -o -name "llama-server" \) -exec codesign --force --sign - {} \;
+    fi
+    codesign --force --sign - --identifier com.clipstash.app \
+        --entitlements "$ENTITLEMENTS_PATH" "$APP_DIR"
 elif [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]]; then
+    if [ -d "$RESOURCES_DIR/LocalInference" ]; then
+        find "$RESOURCES_DIR/LocalInference" -type f \( -name "*.dylib" -o -name "llama-server" \) -exec codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" {} \;
+    fi
     codesign --force --options runtime --timestamp \
-        --sign "$SIGNING_IDENTITY" --identifier com.clipstash.app "$APP_DIR"
+        --sign "$SIGNING_IDENTITY" --identifier com.clipstash.app \
+        --entitlements "$ENTITLEMENTS_PATH" "$APP_DIR"
 else
+    if [ -d "$RESOURCES_DIR/LocalInference" ]; then
+        find "$RESOURCES_DIR/LocalInference" -type f \( -name "*.dylib" -o -name "llama-server" \) -exec codesign --force --options runtime --timestamp=none --sign "$SIGNING_IDENTITY" {} \;
+    fi
     codesign --force --options runtime --timestamp=none \
-        --sign "$SIGNING_IDENTITY" --identifier com.clipstash.app "$APP_DIR"
+        --sign "$SIGNING_IDENTITY" --identifier com.clipstash.app \
+        --entitlements "$ENTITLEMENTS_PATH" "$APP_DIR"
 fi
 codesign --verify --strict "$APP_DIR"
 
