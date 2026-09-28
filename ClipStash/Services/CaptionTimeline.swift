@@ -76,4 +76,10 @@ struct CaptionTimeline {
             rows[i].isFinal = true
         }
     }
+
+    mutating func clear() {
+        rows.removeAll()
+        pending.removeAll()
+        currentID = nil
+    }
 }

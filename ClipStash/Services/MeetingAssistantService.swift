@@ -79,6 +79,15 @@ final class MeetingAssistantService: NSObject, ObservableObject {
         statusMessage = "Stopped"
     }
 
+    /// Starts a fresh caption transcript without interrupting microphone input.
+    func clearCaptions() {
+        cancelActiveTranslation()
+        captionTimeline.clear()
+        lastQueuedPartialUnits = 0
+        transcript = "Waiting for speech…"
+        statusMessage = isRunning ? "Listening from microphone" : "Ready"
+    }
+
     func acceptCorrection() {
         guard !correctionSuggestion.isEmpty else { return }
         transcript = correctionSuggestion

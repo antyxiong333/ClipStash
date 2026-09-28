@@ -72,6 +72,11 @@ private struct MeetingCaptionView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(service.isRunning ? .green : .secondary)
                 Spacer()
+                Button(t("清空", "Clear")) {
+                    service.clearCaptions()
+                }
+                .controlSize(.small)
+                .disabled(service.captionTimeline.rows.isEmpty)
                 Button(service.isRunning ? t("停止", "Stop") : t("开始", "Start")) {
                     service.isRunning ? service.stop() : service.start()
                 }

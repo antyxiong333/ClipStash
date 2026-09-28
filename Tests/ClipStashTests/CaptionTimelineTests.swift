@@ -48,4 +48,15 @@ final class CaptionTimelineTests: XCTestCase {
         timeline.ingest("Short partial completed.", isFinal: true)
         XCTAssertEqual(timeline.next()?.source, "Short partial completed.")
     }
+
+    func testClearRemovesVisibleRowsAndQueuedWork() {
+        var timeline = CaptionTimeline()
+        timeline.ingest("One", isFinal: false)
+        timeline.ingest("Two", isFinal: true)
+
+        timeline.clear()
+
+        XCTAssertTrue(timeline.rows.isEmpty)
+        XCTAssertNil(timeline.next())
+    }
 }
